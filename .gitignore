@@ -5,3 +5,6 @@ coverage/
 *.tgz
 .DS_Store
 publish.local.sh
+.omc/
+.claude/
+.audit/
