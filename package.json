@@ -1,0 +1,63 @@
+{
+  "name": "cc-subagent-models",
+  "version": "1.0.0",
+  "description": "Dynamic subagent model selection and gateway auto-sync patcher for Claude Code (9Router, LiteLLM, OpenRouter)",
+  "type": "module",
+  "bin": {
+    "cc-subagent-models": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/cli.ts src/index.ts --format esm --dts --clean",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "claude-code",
+    "anthropic",
+    "subagent",
+    "models",
+    "9router",
+    "litellm",
+    "openrouter",
+    "patcher",
+    "cli"
+  ],
+  "author": "Tejas Lamba",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TejasLamba2006/cc-subagent-models.git"
+  },
+  "homepage": "https://github.com/TejasLamba2006/cc-subagent-models#readme",
+  "bugs": {
+    "url": "https://github.com/TejasLamba2006/cc-subagent-models/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
