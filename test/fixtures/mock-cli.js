@@ -164,7 +164,11 @@ function cv(e) { return null; }
 function Fa(e, s) {}
 function en(e) { return e; }
 function aT(e) { return e; }
-function At(e) { return e.replace(/\\[1m\\]$/i, ""); }
+export function At(e) { return e.replace(/\\[1m\\]$/i, ""); }
+export function kd(e) { return e.replace(/\\[(1|2)m\\]/gi, ""); }
+function KE(e) { return /\\[1m\\]/i.test(e); }
+const cTr = 200000;
+export function U4u(e,t){if(KE(e))return 1e6;return cTr}
 function Bs(e, s) { return [e, s]; }
 function X$n(e, s) { return false; }
 

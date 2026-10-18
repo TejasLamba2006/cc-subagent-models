@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +6,7 @@ import {
   type BackupMetadata,
   getBackupMetaPath,
   getBackupPath,
-  isPatchedContent,
+  LEGACY_PATCH_MARKER,
   PATCH_MARKER,
   type PatchResult,
   transformCliJsContent,
@@ -38,7 +37,6 @@ interface TweakccNativeBridge {
 }
 
 async function loadNativeBridge(): Promise<TweakccNativeBridge> {
-  // 1. Try local/global node_modules resolution if tweakcc is installed
   try {
     const mod = (await import("tweakcc/dist/nativeInstallation.mjs" as string)) as TweakccNativeBridge;
     if (typeof mod.extractClaudeJsModulesFromNativeInstallation === "function") {
@@ -107,6 +105,7 @@ export async function patchNativeBinary(
       schemaMatches: 0,
       secondaryEnumMatches: 0,
       resolverMatches: 0,
+      contextWindowMatches: 0,
       versionHash: existingMeta.versionHash || "patched",
       dryRun: Boolean(options.dryRun),
       syntaxVerified: true,
@@ -114,24 +113,44 @@ export async function patchNativeBinary(
   }
 
   const bridge = await loadNativeBridge();
-  const extracted = bridge.extractClaudeJsModulesFromNativeInstallation(resolvedPath);
+  // If upgrading from V1 patch, extract from clean .cc-backup when available
+  const sourceBinForExtract =
+    fs.existsSync(backupPath) &&
+    (() => {
+      try {
+        return fs.readFileSync(resolvedPath).includes(Buffer.from(LEGACY_PATCH_MARKER, "utf8"));
+      } catch {
+        return false;
+      }
+    })()
+      ? backupPath
+      : resolvedPath;
+
+  const extracted = bridge.extractClaudeJsModulesFromNativeInstallation(sourceBinForExtract);
   if (!extracted) {
-    throw new Error(`Failed to extract embedded Bun JS modules from ${resolvedPath}`);
+    throw new Error(`Failed to extract embedded Bun JS modules from ${sourceBinForExtract}`);
   }
 
   let totalSchema = 0;
   let totalSecondary = 0;
   let totalResolver = 0;
+  let totalContextWindow = 0;
   const modified: NativeInstallationModule[] = [];
 
   for (const m of extracted.modules) {
     if (!m.isJavaScript) continue;
     const orig = m.contents.toString("utf8");
     const t = transformCliJsContent(orig);
-    if (t.schemaMatches > 0 || t.secondaryEnumMatches > 0 || t.resolverMatches > 0) {
+    if (
+      t.schemaMatches > 0 ||
+      t.secondaryEnumMatches > 0 ||
+      t.resolverMatches > 0 ||
+      t.contextWindowMatches > 0
+    ) {
       totalSchema += t.schemaMatches;
       totalSecondary += t.secondaryEnumMatches;
       totalResolver += t.resolverMatches;
+      totalContextWindow += t.contextWindowMatches;
       modified.push({
         ...m,
         contents: Buffer.from(t.code, "utf8"),
@@ -152,6 +171,7 @@ export async function patchNativeBinary(
       schemaMatches: totalSchema,
       secondaryEnumMatches: totalSecondary,
       resolverMatches: totalResolver,
+      contextWindowMatches: totalContextWindow,
       versionHash: extracted.sourceSha256,
       dryRun: true,
       syntaxVerified: true,
@@ -170,17 +190,14 @@ export async function patchNativeBinary(
   };
   fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2) + "\n", "utf8");
 
-  // Repack to a staged file first so if the running binary is locked on Windows (EBUSY/EPERM),
-  // we still produce a ready-to-swap binary and can also patch the version file in ~/.local/share/claude/versions/<ver>!
   const stagedPath = `${resolvedPath}.cc-patched`;
-  fs.copyFileSync(resolvedPath, stagedPath);
+  fs.copyFileSync(sourceBinForExtract, stagedPath);
   bridge.repackNativeInstallationModules(
     stagedPath,
     { sourceSha256: extracted.sourceSha256, modules: modified },
     stagedPath,
   );
 
-  // Also check if ~/.local/share/claude/versions/<claudeVersion> exists and matches hash
   let lockedRunning = false;
   try {
     const oldExe = `${resolvedPath}.cc-old`;
@@ -195,8 +212,6 @@ export async function patchNativeBinary(
       fs.copyFileSync(stagedPath, resolvedPath);
       fs.unlinkSync(stagedPath);
     } catch {
-      // On Windows, a running .exe cannot be overwritten via copyFileSync,
-      // but CAN be renamed out of the way!
       fs.renameSync(resolvedPath, oldExe);
       fs.renameSync(stagedPath, resolvedPath);
       try {
@@ -222,6 +237,7 @@ export async function patchNativeBinary(
     schemaMatches: totalSchema,
     secondaryEnumMatches: totalSecondary,
     resolverMatches: totalResolver,
+    contextWindowMatches: totalContextWindow,
     versionHash: extracted.sourceSha256,
     dryRun: false,
     syntaxVerified: true,

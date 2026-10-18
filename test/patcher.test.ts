@@ -5,8 +5,11 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addModelToConfig,
+  CLAUDE_MD_SECTION_START,
+  parseContextTokens,
   readConfig,
   removeModelFromConfig,
+  syncClaudeMdInstructions,
   writeConfig,
 } from "../src/config.js";
 import { normalizeGatewayModelsUrl, syncGatewayModels } from "../src/gateway-sync.js";
@@ -14,7 +17,6 @@ import {
   isPatchedContent,
   patchCliJs,
   restoreCliJs,
-  transformCliJsContent,
   verifySyntaxWithNode,
 } from "../src/patcher.js";
 import { MOCK_CLI_V2_1_112, MOCK_CLI_V2_1_289 } from "./fixtures/mock-cli.js";
@@ -120,7 +122,7 @@ describe("cc-subagent-models patcher & runtime engine", () => {
     expect(isPatchedContent(fs.readFileSync(cliFile, "utf8"))).toBe(false);
   });
 
-  it("patches v2.1.289 cli.js (standalone Zod v4 j([\"sonnet\",\"opus\",\"haiku\",\"fable\"]) + allowlist fallback vH)", async () => {
+  it("patches v2.1.289 cli.js, resolves [<size>] context limits, and strips [<size>] before API wire call", async () => {
     const cliFile = path.join(tmpDir, "cli-2.1.289.mjs");
     fs.writeFileSync(cliFile, MOCK_CLI_V2_1_289, "utf8");
 
@@ -128,12 +130,13 @@ describe("cc-subagent-models patcher & runtime engine", () => {
     expect(res.alreadyPatched).toBe(false);
     expect(res.schemaMatches).toBe(1);
     expect(res.resolverMatches).toBeGreaterThanOrEqual(1);
+    expect(res.contextWindowMatches).toBeGreaterThanOrEqual(2);
     expect(verifySyntaxWithNode(cliFile).valid).toBe(true);
 
     writeConfig(
       {
         mode: "enum",
-        models: [{ id: "evomap/gpt-5.4", Hint: "High capability" }],
+        models: [{ id: "evomap/gpt-5.4", Hint: "High capability", contextWindow: 500000 }],
       },
       cfgPath,
     );
@@ -142,18 +145,28 @@ describe("cc-subagent-models patcher & runtime engine", () => {
     const schema = mod289.Bo();
     expect(schema.shape.model.type).toBe("enum");
     expect(schema.shape.model.values).toContain("evomap/gpt-5.4");
-    expect(schema.shape.model.description).toContain('- "evomap/gpt-5.4" (High capability)');
+    expect(schema.shape.model.description).toContain(
+      '- "evomap/gpt-5.4" (High capability [500k ctx])',
+    );
 
     // Even though Ur(E) only allows `claude-*` models, our patched vH resolver passes gateway models through verbatim!
     expect(mod289.vH(undefined, "claude-opus-5-5", "evomap/gpt-5.4", "default")).toBe(
       "evomap/gpt-5.4",
     );
-    expect(mod289.vH("iflow/qwen3-coder-plus", "claude-opus-5-5", undefined, "default")).toBe(
-      "iflow/qwen3-coder-plus",
+    expect(mod289.vH(undefined, "claude-opus-5-5", "oc/exo-free[256k]", "default")).toBe(
+      "oc/exo-free[256k]",
     );
     // Standard Anthropic aliases still resolve to their tier defaults
     expect(mod289.vH(undefined, "claude-opus-5-5", "haiku", "default")).toBe("claude-haiku-4-5");
     expect(mod289.vH("inherit", "claude-opus-5-5", undefined, "default")).toBe("claude-opus-5-5");
+
+    // Verify context window resolution (`U4u`) and wire suffix stripping (`kd` / `At`)
+    expect(mod289.U4u("oc/exo-free[256k]", [])).toBe(256000);
+    expect(mod289.U4u("oc/exo-free[1m]", [])).toBe(1000000);
+    expect(mod289.U4u("evomap/gpt-5.4", [])).toBe(500000); // from config contextWindow
+    expect(mod289.U4u("oc/exo-free", [])).toBe(1000000); // non-Claude default 1M
+    expect(mod289.kd("oc/exo-free[256k]")).toBe("oc/exo-free");
+    expect(mod289.At("oc/exo-free[500k]")).toBe("oc/exo-free");
   });
 
   it("supports CC_SUBAGENT_MODELS environment variable override", async () => {
@@ -168,12 +181,14 @@ describe("cc-subagent-models patcher & runtime engine", () => {
     expect(schema.shape.model.description).toContain("local/llama-3.3-70b");
   });
 
-  it("manages config via add/remove and syncs from /v1/models gateway while preserving user hints", async () => {
-    addModelToConfig("iflow/qwen3-coder-plus", "Fast coding model", cfgPath);
+  it("manages config via add/remove with contextWindow and syncs from /v1/models gateway", async () => {
+    addModelToConfig("iflow/qwen3-coder-plus", "Fast coding model", cfgPath, "256k");
     addModelToConfig("glm/glm-4.5", "Unit test specialist", cfgPath);
 
     let cfg = readConfig(cfgPath);
     expect(cfg.models).toHaveLength(2);
+    expect(parseContextTokens("256k")).toBe(256000);
+    expect(parseContextTokens("1m")).toBe(1000000);
 
     const mockFetch = async () =>
       new Response(
@@ -204,22 +219,39 @@ describe("cc-subagent-models patcher & runtime engine", () => {
 
     expect(syncRes.gatewayUrl).toBe("http://localhost:20128/v1/models");
     expect(syncRes.savedCount).toBe(2);
-    // Preserved manual hint on iflow/qwen3-coder-plus
+    // Preserved manual hint & manual 256k contextWindow on iflow/qwen3-coder-plus
     expect(syncRes.models[0]).toEqual({
       id: "iflow/qwen3-coder-plus",
       Hint: "Fast coding model",
       ownedBy: "iflow",
+      contextWindow: 256000,
     });
-    // Auto-generated hint on deepseek/deepseek-reasoner
+    // Auto-generated hint & gateway 64k contextWindow on deepseek/deepseek-reasoner
     expect(syncRes.models[1]).toEqual({
       id: "deepseek/deepseek-reasoner",
       Hint: "reasoning, tool-use, 64k ctx",
       ownedBy: "deepseek",
+      contextWindow: 64000,
     });
 
     const rem = removeModelFromConfig("iflow/qwen3-coder-plus", cfgPath);
     expect(rem.removed).toBe(true);
     expect(rem.config.models).toHaveLength(1);
+  });
+
+  it("idempotently writes and updates subagent instructions in CLAUDE.md", () => {
+    const mdPath = path.join(tmpDir, "CLAUDE.md");
+    fs.writeFileSync(mdPath, "# Existing Rule\n\nKeep code simple.\n", "utf8");
+
+    const first = syncClaudeMdInstructions(mdPath);
+    expect(first.updated).toBe(true);
+    const content1 = fs.readFileSync(mdPath, "utf8");
+    expect(content1).toContain("# Existing Rule");
+    expect(content1).toContain(CLAUDE_MD_SECTION_START);
+    expect(content1).toContain("oc/exo-free[1m]");
+
+    const second = syncClaudeMdInstructions(mdPath);
+    expect(second.updated).toBe(false);
   });
 
   it("normalizes gateway URLs accurately", () => {

@@ -1,13 +1,18 @@
 export {
   addModelToConfig,
+  CLAUDE_MD_INSTRUCTIONS_BLOCK,
+  CLAUDE_MD_SECTION_START,
   DEFAULT_CONFIG,
+  getClaudeMdPath,
   getConfigPath,
   normalizeModelEntry,
+  parseContextTokens,
   readConfig,
   removeModelFromConfig,
   type SubagentModelEntry,
   type SubagentModelsConfig,
   type SubagentPatchMode,
+  syncClaudeMdInstructions,
   writeConfig,
 } from "./config.js";
 export {
@@ -35,6 +40,7 @@ export {
   getBackupMetaPath,
   getBackupPath,
   isPatchedContent,
+  LEGACY_PATCH_MARKER,
   PATCH_MARKER,
   type PatchResult,
   patchCliJs,

@@ -1,5 +1,6 @@
 import {
   normalizeModelEntry,
+  parseContextTokens,
   readConfig,
   type SubagentModelEntry,
   type SubagentModelsConfig,
@@ -19,6 +20,7 @@ export interface RawGatewayModel {
     contextWindow?: number;
   };
   context_length?: number;
+  max_input_tokens?: number;
 }
 
 export interface SyncGatewayOptions {
@@ -59,7 +61,8 @@ function buildAutoHint(model: RawGatewayModel): string | undefined {
   if (model.capabilities?.tools) {
     parts.push("tool-use");
   }
-  const ctx = model.capabilities?.contextWindow || model.context_length;
+  const ctx =
+    model.capabilities?.contextWindow || model.context_length || model.max_input_tokens;
   if (typeof ctx === "number" && ctx >= 1000) {
     parts.push(`${Math.round(ctx / 1000)}k ctx`);
   }
@@ -110,12 +113,16 @@ export async function syncGatewayModels(
   const { gatewayUrl, models: rawList } = await fetchGatewayModels(options);
   const currentConfig = readConfig(options.configPath);
   const existingHints = new Map<string, string>();
+  const existingCtx = new Map<string, number>();
 
   if (options.mergeHints !== false) {
     for (const item of currentConfig.models) {
       const norm = normalizeModelEntry(item);
       if (norm.id && norm.Hint) {
         existingHints.set(norm.id, norm.Hint);
+      }
+      if (norm.id && norm.contextWindow) {
+        existingCtx.set(norm.id, norm.contextWindow);
       }
     }
   }
@@ -133,11 +140,16 @@ export async function syncGatewayModels(
     const preservedHint = existingHints.get(id);
     const derivedHint = options.autoHint ? buildAutoHint(raw) : undefined;
     const finalHint = preservedHint || derivedHint;
+    const rawCtx = parseContextTokens(
+      raw.capabilities?.contextWindow ?? raw.context_length ?? raw.max_input_tokens,
+    );
+    const finalCtx = existingCtx.get(id) ?? rawCtx;
 
     synced.push({
       id,
       ...(finalHint ? { Hint: finalHint } : {}),
       ...(raw.owned_by ? { ownedBy: raw.owned_by } : {}),
+      ...(finalCtx ? { contextWindow: finalCtx } : {}),
     });
   }
 

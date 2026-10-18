@@ -1,7 +1,7 @@
 {
   "name": "cc-subagent-models",
-  "version": "1.0.0",
-  "description": "Dynamic subagent model selection and gateway auto-sync patcher for Claude Code (9Router, LiteLLM, OpenRouter)",
+  "version": "1.1.0",
+  "description": "Dynamic subagent model selection, per-call context limits, and gateway auto-sync patcher for Claude Code (9Router, LiteLLM, OpenRouter)",
   "type": "module",
   "bin": {
     "cc-subagent-models": "./dist/cli.js"
